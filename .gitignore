@@ -1,0 +1,28 @@
+# .NET Core
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ASP.NET-specific
+wwwroot/
+appsettings*.json
+secrets.json
+
+# IDEs
+.vscode/
+*.code-workspace
+.idea/
+*.sln.iml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Publish
+publish/
