@@ -27,7 +27,7 @@ Este es un **proyecto personal y de aprendizaje**. No está pensado para producc
 ```Ejemplo json
 {
   "JwtSettings": {
-    "SecretKey": "clave-super-secreta",
+    "SecretKey": "clave-secreta-ejemplo-abcd12345678890",
     "Issuer": "tu-app",
     "Audience": "usuarios"
   },
