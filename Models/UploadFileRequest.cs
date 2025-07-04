@@ -13,7 +13,7 @@ namespace PersonalCloudApi.Models
     //}
     public class UploadFileRequest
     {
-        public IFormFile? File { get; set; }
+        public IFormFile File { get; set; }
         public string? Folder { get; set; }
     }
 
