@@ -1,16 +1,20 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MimeKit;
+using PersonalCloudApi;
 using PersonalCloudApi.Models;
 using Swashbuckle.AspNetCore.Annotations;
 using System.IO.Compression;
+
 
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
 [Tags("Archivos")]
-public class FilesController : ControllerBase
+
+public class FilesController : ControllerBase //ControllerBase (base para APIs sin vistas)
 {
+
     private readonly string _storagePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "Archivos");
 
     public FilesController()
@@ -53,81 +57,142 @@ public class FilesController : ControllerBase
     }
 
     [HttpPost("create-folder")]
-    [SwaggerOperation(Summary = "Crea una carpeta", Description = "Crea una carpeta vacía en el almacenamiento.")]
+    [SwaggerOperation(Summary = "Crea una carpeta", Description = "Crea una subcarpeta en el almacenamiento raíz.")]
     [SwaggerResponse(200, "Carpeta creada")]
     [SwaggerResponse(400, "Nombre inválido")]
     [SwaggerResponse(409, "La carpeta ya existe")]
     public IActionResult CreateFolder([FromQuery] string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.Contains(".."))
-            return BadRequest("Nombre inválido");
+        if (string.IsNullOrWhiteSpace(name) || name.Contains("..") || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return BadRequest("Nombre de carpeta inválido.");
 
         var path = Path.Combine(_storagePath, name);
+
         if (Directory.Exists(path))
-            return Conflict("La carpeta ya existe");
+            return Conflict("La carpeta ya existe.");
 
         Directory.CreateDirectory(path);
-        return Ok(new { mensaje = "Carpeta creada" });
+
+        return Ok(new { mensaje = "Carpeta creada exitosamente", carpeta = name });
     }
 
     [HttpGet("folders")]
-    [SwaggerOperation(Summary = "Lista carpetas", Description = "Devuelve los nombres de todas las subcarpetas.")]
+    [SwaggerOperation(Summary = "Lista carpetas", Description = "Devuelve los nombres de todas las subcarpetas en la raíz.")]
     [SwaggerResponse(200, "Listado obtenido", typeof(IEnumerable<string>))]
     public IActionResult ListFolders()
     {
-        var folders = Directory.Exists(_storagePath)
-            ? Directory.GetDirectories(_storagePath).Select(Path.GetFileName)
-            : Enumerable.Empty<string>();
+        if (!Directory.Exists(_storagePath))
+            return Ok(Enumerable.Empty<string>());
+
+        var folders = Directory.GetDirectories(_storagePath)
+            .Select(Path.GetFileName)
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
 
         return Ok(folders);
     }
 
-    [HttpGet("list-folder")]
-    [SwaggerOperation(Summary = "Lista archivos de carpeta", Description = "Devuelve archivos de una carpeta específica.")]
-    [SwaggerResponse(200, "Listado de archivos", typeof(IEnumerable<object>))]
-    [SwaggerResponse(400, "Carpeta inválida")]
+    [HttpGet("list")]
+    [SwaggerOperation(Summary = "Lista archivos", Description = "Lista archivos en la raíz o en una carpeta, con orden, filtros y paginación.")]
+    [SwaggerResponse(200, "Listado paginado de archivos")]
+    [SwaggerResponse(400, "Parámetros inválidos")]
     [SwaggerResponse(404, "Carpeta no encontrada")]
-    public IActionResult ListFilesInFolder([FromQuery] string folder)
+    public IActionResult ListFiles(
+    [FromQuery] string? folder,
+    [FromQuery] string? sortBy,
+    [FromQuery] string? order,
+    [FromQuery] string? mime,
+    [FromQuery] string? ext,
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 20)
     {
-        if (string.IsNullOrWhiteSpace(folder) || folder.Contains(".."))
-            return BadRequest("Debe indicar una carpeta válida.");
+        if (page < 1 || pageSize < 0 || pageSize > 1000)
+            return BadRequest("Parámetros de paginación inválidos.");
 
-        var path = Path.Combine(_storagePath, folder);
+        string path = _storagePath;
+
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            if (folder.Contains("..") || folder.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+                return BadRequest("Nombre de carpeta inválido.");
+
+            path = Path.Combine(_storagePath, folder);
+            if (!Directory.Exists(path))
+                return NotFound("Carpeta no encontrada.");
+        }
+
         if (!Directory.Exists(path))
-            return NotFound("Carpeta no encontrada");
-
-        var archivos = Directory.GetFiles(path)
-            .Select(file => new
+            return Ok(new
             {
-                nombre = Path.GetFileName(file),
-                tamaño = new FileInfo(file).Length,
-                fechaSubida = System.IO.File.GetCreationTime(file),
-                tipoMime = MimeTypes.GetMimeType(file),
-                carpeta = folder,
-                url = $"{Request.Scheme}://{Request.Host}/Archivos/{folder}/{Path.GetFileName(file)}"
+                totalArchivos = 0,
+                archivos = Enumerable.Empty<object>()
             });
 
-        return Ok(archivos);
-    }
-
-    [HttpGet("list-root")]
-    [SwaggerOperation(Summary = "Lista archivos en raíz", Description = "Devuelve los archivos sueltos (no en carpetas).")]
-    [SwaggerResponse(200, "Listado de archivos en raíz", typeof(IEnumerable<object>))]
-    public IActionResult ListRootFiles()
-    {
-        var files = Directory.Exists(_storagePath)
-            ? Directory.GetFiles(_storagePath).Select(file => new
+        var archivos = Directory.GetFiles(path)
+            .Select(file =>
             {
-                nombre = Path.GetFileName(file),
-                tamaño = new FileInfo(file).Length,
-                fechaSubida = System.IO.File.GetCreationTime(file),
-                tipoMime = MimeTypes.GetMimeType(file),
-                carpeta = "(raíz)",
-                url = $"{Request.Scheme}://{Request.Host}/Archivos/{Path.GetFileName(file)}"
-            })
-            : Enumerable.Empty<object>();
+                var fileInfo = new FileInfo(file);
+                return new ArchivoDto
+                {
+                    Nombre = fileInfo.Name,
+                    Tamaño = fileInfo.Length,
+                    FechaSubida = fileInfo.CreationTime,
+                    TipoMime = MimeTypes.GetMimeType(fileInfo.Extension),
+                    Carpeta = string.IsNullOrWhiteSpace(folder) ? null : folder,
+                    Url = GenerateUrl(
+                        string.IsNullOrWhiteSpace(folder)
+                            ? fileInfo.Name
+                            : Path.Combine(folder, fileInfo.Name))
+                };
+            });
 
-        return Ok(files);
+        if (!string.IsNullOrWhiteSpace(mime))
+            archivos = archivos.Where(a => a.TipoMime.Equals(mime, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(ext))
+        {
+            var normalizedExt = ext.StartsWith(".") ? ext : "." + ext;
+            archivos = archivos.Where(a => Path.GetExtension(a.Nombre).Equals(normalizedExt, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(sortBy))
+        {
+            bool descending = string.Equals(order, "desc", StringComparison.OrdinalIgnoreCase);
+            archivos = sortBy.ToLower() switch
+            {
+                "fecha" => descending ? archivos.OrderByDescending(a => a.FechaSubida) : archivos.OrderBy(a => a.FechaSubida),
+                "tamaño" => descending ? archivos.OrderByDescending(a => a.Tamaño) : archivos.OrderBy(a => a.Tamaño),
+                "nombre" => descending ? archivos.OrderByDescending(a => a.Nombre) : archivos.OrderBy(a => a.Nombre),
+                _ => archivos
+            };
+        }
+
+        int total = archivos.Count();
+
+        // Si pageSize == 0, devolver todos los archivos sin paginar
+        if (pageSize == 0)
+        {
+            return Ok(new
+            {
+                totalArchivos = total,
+                archivos = archivos.ToList()
+            });
+        }
+
+        // Aplicar paginación
+        int totalPaginas = (int)Math.Ceiling((double)total / pageSize);
+        var archivosPagina = archivos
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        return Ok(new
+        {
+            paginaActual = page,
+            totalPaginas,
+            totalArchivos = total,
+            archivos = archivosPagina
+        });
     }
 
     [HttpGet("list-all")]
@@ -135,26 +200,28 @@ public class FilesController : ControllerBase
     [SwaggerResponse(200, "Listado completo de archivos", typeof(IEnumerable<object>))]
     public IActionResult ListAllFiles()
     {
-        var archivos = Directory.Exists(_storagePath)
-            ? Directory.GetFiles(_storagePath, "*.*", SearchOption.AllDirectories).Select(file =>
+        var archivos = Directory.GetFiles(_storagePath, "*", SearchOption.AllDirectories)
+            .Select(path =>
             {
-                var relativePath = Path.GetRelativePath(_storagePath, Path.GetDirectoryName(file));
-                var carpeta = string.IsNullOrWhiteSpace(relativePath) || relativePath == "." ? null : relativePath.Replace("\\", "/");
+                var fileInfo = new FileInfo(path);
+                var relativeDir = Path.GetRelativePath(_storagePath, fileInfo.DirectoryName!);
+                var relativePath = Path.GetRelativePath(_storagePath, path);
 
-                return new
+                return new ArchivoDto
                 {
-                    nombre = Path.GetFileName(file),
-                    tamaño = new FileInfo(file).Length,
-                    fechaSubida = System.IO.File.GetCreationTime(file),
-                    tipoMime = MimeTypes.GetMimeType(file),
-                    carpeta,
-                    url = $"{Request.Scheme}://{Request.Host}/Archivos/{(string.IsNullOrWhiteSpace(relativePath) || relativePath == "." ? "" : relativePath + "/")}{Path.GetFileName(file)}"
+                    Nombre = fileInfo.Name,
+                    Tamaño = fileInfo.Length,
+                    FechaSubida = fileInfo.CreationTime,
+                    TipoMime = MimeTypes.GetMimeType(fileInfo.Extension),
+                    Carpeta = string.IsNullOrWhiteSpace(relativeDir) || relativeDir == "." ? null : relativeDir,
+                    Url = GenerateUrl(relativePath)
                 };
             })
-            : Enumerable.Empty<object>();
+            .ToList();
 
         return Ok(archivos);
     }
+
 
     [HttpGet("download-zip")]
     [SwaggerOperation(Summary = "Descarga carpeta como ZIP", Description = "Genera un .zip de la carpeta indicada y lo descarga.")]
@@ -219,15 +286,9 @@ public class FilesController : ControllerBase
         Directory.Delete(fullPath, true);
         return Ok(new { mensaje = "Carpeta eliminada correctamente" });
     }
+    private string GenerateUrl(string relativePath)
+    {
+        var encodedPath = relativePath.Replace("\\", "/");
+        return $"{Request.Scheme}://{Request.Host}/Archivos/{encodedPath}";
+    }
 }
-
-//public static class MimeTypes
-//{
-//    public static string GetMimeType(string fileName)
-//    {
-//        return new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider()
-//            .TryGetContentType(fileName, out var mime)
-//            ? mime
-//            : "application/octet-stream";
-//    }
-//}
