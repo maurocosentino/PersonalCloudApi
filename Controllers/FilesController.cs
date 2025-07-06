@@ -6,12 +6,10 @@ using PersonalCloudApi.Models;
 using Swashbuckle.AspNetCore.Annotations;
 using System.IO.Compression;
 
-
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
 [Tags("Archivos")]
-
 public class FilesController : ControllerBase //ControllerBase (base para APIs sin vistas)
 {
 
@@ -98,13 +96,12 @@ public class FilesController : ControllerBase //ControllerBase (base para APIs s
     [SwaggerResponse(400, "Parámetros inválidos")]
     [SwaggerResponse(404, "Carpeta no encontrada")]
     public IActionResult ListFiles(
-    [FromQuery] string? folder,
-    [FromQuery] string? sortBy,
-    [FromQuery] string? order,
-    [FromQuery] string? mime,
-    [FromQuery] string? ext,
-    [FromQuery] int page = 1,
-    [FromQuery] int pageSize = 20)
+        [FromQuery] string? folder,
+        [FromQuery] string? sortBy,
+        [FromQuery] string? order,
+        [FromQuery] string? type,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
     {
         if (page < 1 || pageSize < 0 || pageSize > 1000)
             return BadRequest("Parámetros de paginación inválidos.");
@@ -146,13 +143,28 @@ public class FilesController : ControllerBase //ControllerBase (base para APIs s
                 };
             });
 
-        if (!string.IsNullOrWhiteSpace(mime))
-            archivos = archivos.Where(a => a.TipoMime.Equals(mime, StringComparison.OrdinalIgnoreCase));
-
-        if (!string.IsNullOrWhiteSpace(ext))
+        // Filtrado por tipo
+        if (!string.IsNullOrWhiteSpace(type))
         {
-            var normalizedExt = ext.StartsWith(".") ? ext : "." + ext;
-            archivos = archivos.Where(a => Path.GetExtension(a.Nombre).Equals(normalizedExt, StringComparison.OrdinalIgnoreCase));
+            switch (type.ToLower())
+            {
+                case "imagenes":
+                    archivos = archivos.Where(a => new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" }.Contains(Path.GetExtension(a.Nombre).ToLower()));
+                    break;
+                case "documentos":
+                    archivos = archivos.Where(a => new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt" }.Contains(Path.GetExtension(a.Nombre).ToLower()));
+                    break;
+                case "videos":
+                    archivos = archivos.Where(a => new[] { ".mp4", ".avi", ".mov", ".webm" }.Contains(Path.GetExtension(a.Nombre).ToLower()));
+                    break;
+                case "audios":
+                    archivos = archivos.Where(a => new[] { ".mp3", ".wav", ".ogg" }.Contains(Path.GetExtension(a.Nombre).ToLower()));
+                    break;
+                case "todos":
+                default:
+                    // No aplica filtro
+                    break;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(sortBy))
@@ -166,7 +178,6 @@ public class FilesController : ControllerBase //ControllerBase (base para APIs s
                 _ => archivos
             };
         }
-
         int total = archivos.Count();
 
         // Si pageSize == 0, devolver todos los archivos sin paginar
@@ -194,6 +205,7 @@ public class FilesController : ControllerBase //ControllerBase (base para APIs s
             archivos = archivosPagina
         });
     }
+
 
     [HttpGet("list-all")]
     [SwaggerOperation(Summary = "Lista todos los archivos", Description = "Incluye archivos en raíz y subcarpetas.")]
